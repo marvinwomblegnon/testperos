@@ -32,6 +32,93 @@ Function ConnecterAccess(sPath As String) As Object
     Set ConnecterAccess = Nothing
 End Function
 
+' ================================================================
+' DIAGNOSTIC : liste toutes les colonnes de la table DATABASE
+' A lancer UNE FOIS pour connaitre les vrais noms de colonnes
+' ================================================================
+Sub ListerColonnesAccess()
+    Dim sPath As String
+    Dim conn  As Object
+    Dim rs    As Object
+
+    sPath = Trim(ThisWorkbook.Sheets(1).Range("B1").Value)
+    If sPath = "" Or Dir(sPath) = "" Then
+        MsgBox "Fichier Access introuvable. Verifiez CONFIG > B1.", vbCritical
+        Exit Sub
+    End If
+
+    Set conn = ConnecterAccess(sPath)
+    If conn Is Nothing Then
+        MsgBox "Connexion impossible.", vbCritical
+        Exit Sub
+    End If
+
+    Set rs = CreateObject("ADODB.Recordset")
+    rs.Open "SELECT TOP 1 * FROM [DATABASE]", conn, 1, 3
+
+    Dim msg As String
+    msg = "Colonnes de la table DATABASE (" & rs.Fields.Count & " colonnes) :" & vbCrLf & vbCrLf
+    Dim f As Object
+    Dim i As Integer
+    i = 1
+    For Each f In rs.Fields
+        msg = msg & i & ". [" & f.Name & "]" & vbCrLf
+        i = i + 1
+        ' Limiter l affichage a 40 colonnes par boite
+        If i Mod 40 = 0 Then
+            MsgBox msg, vbInformation, "Colonnes ACCESS (suite)"
+            msg = ""
+        End If
+    Next f
+
+    rs.Close
+    conn.Close
+
+    If Len(msg) > 0 Then
+        MsgBox msg, vbInformation, "Colonnes de la table DATABASE"
+    End If
+End Sub
+
+' ================================================================
+' UTILITAIRE : lire le champ par nom avec fallback silencieux
+' ================================================================
+Function LireChamp(rs As Object, nomChamp As String) As Variant
+    On Error Resume Next
+    LireChamp = rs.Fields(nomChamp).Value
+    If Err.Number <> 0 Then
+        LireChamp = Null
+        Err.Clear
+    End If
+    On Error GoTo 0
+End Function
+
+Function CalculerDureeSuspens(dEnvoie1 As Variant, dRetour1 As Variant, _
+                               dEnvoie2 As Variant, dRetour2 As Variant, _
+                               autresJ   As Variant, _
+                               bEnCours  As Boolean) As Long
+    Dim duree As Long
+    duree = 0
+    If IsDate(dEnvoie1) Then
+        If IsDate(dRetour1) Then
+            duree = duree + (CDate(dRetour1) - CDate(dEnvoie1))
+        ElseIf bEnCours Then
+            duree = duree + (Date - CDate(dEnvoie1))
+        End If
+    End If
+    If IsDate(dEnvoie2) Then
+        If IsDate(dRetour2) Then
+            duree = duree + (CDate(dRetour2) - CDate(dEnvoie2))
+        ElseIf bEnCours Then
+            duree = duree + (Date - CDate(dEnvoie2))
+        End If
+    End If
+    If IsNumeric(autresJ) Then
+        If CLng(autresJ) > 0 Then duree = duree + CLng(autresJ)
+    End If
+    If duree < 0 Then duree = 0
+    CalculerDureeSuspens = duree
+End Function
+
 Sub ActualiserDepuisAccess()
 
     Dim sPath    As String
@@ -43,7 +130,6 @@ Sub ActualiserDepuisAccess()
     Dim wsCfg    As Worksheet
     Dim wsPrm    As Worksheet
     Dim i        As Long
-    Dim lastRow  As Long
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -69,13 +155,12 @@ Sub ActualiserDepuisAccess()
     ' -- 2. Connexion --
     Set conn = ConnecterAccess(sPath)
     If conn Is Nothing Then
-        MsgBox "Impossible de se connecter a Access." & vbCrLf & vbCrLf & _
-               "Lancez la macro DiagnosticProviders pour identifier le probleme.", _
-               vbCritical
+        MsgBox "Impossible de se connecter a Access." & vbCrLf & _
+               "Lancez DiagnosticProviders.", vbCritical
         GoTo Cleanup
     End If
 
-    ' -- 3. Analystes distincts -> Parametres col C --
+    ' -- 3. Analystes --
     Dim lastAnRow As Long
     lastAnRow = wsPrm.Cells(wsPrm.Rows.Count, 3).End(xlUp).Row
     If lastAnRow >= 2 Then wsPrm.Range("C2:C" & lastAnRow).ClearContents
@@ -107,7 +192,6 @@ Sub ActualiserDepuisAccess()
     Dim nbAnalystes As Long
     nbAnalystes = anRow - 2
 
-    ' Validation liste deroulante col E
     On Error Resume Next
     wsSus.Range("E3:E202").Validation.Delete
     If nbAnalystes > 0 Then
@@ -120,11 +204,12 @@ Sub ActualiserDepuisAccess()
     End If
     On Error GoTo ErrHandler
 
-    ' -- 4. Requete principale --
-    ' On utilise SELECT * pour eviter les erreurs de noms de colonnes
-    ' puis on lit les champs par leur nom depuis le recordset
+    ' -- 4. Requete : SELECT * pour eviter erreurs de noms --
     Set rs = CreateObject("ADODB.Recordset")
-    rs.Open "SELECT * FROM [DATABASE] WHERE [ETAT] = 'En suspens' " & _
+    rs.Open "SELECT * FROM [DATABASE] " & _
+            "WHERE [ETAT] LIKE '*suspens*' " & _
+            "OR [ENVOIE MARCHE 1] IS NOT NULL " & _
+            "OR [ENVOIE MARCHE 2] IS NOT NULL " & _
             "ORDER BY [IDSG]", conn, 1, 3
 
     ' -- 5. Ecriture dans Donnees Access --
@@ -133,39 +218,64 @@ Sub ActualiserDepuisAccess()
     If lastDat > 2 Then wsDat.Rows("3:" & lastDat).ClearContents
 
     If rs.EOF Then
-        MsgBox "Aucun dossier avec ETAT = 'En suspens' trouve.", vbInformation
+        MsgBox "Aucun dossier en suspens trouve.", vbInformation
         wsCfg.Range("B4").Value = "Connecte - aucun suspens"
         GoTo Cleanup
     End If
 
-    ' Ecrire les colonnes utiles une par une depuis le recordset
-    ' pour eviter toute erreur de nom de champ
+    ' Detecter les vrais noms de colonnes dates dans le recordset
+    ' en cherchant par mots-cles (insensible a la casse)
+    Dim colEnvoie1 As String, colRetour1 As String
+    Dim colEnvoie2 As String, colRetour2 As String
+    Dim colAutresJ As String
+    colEnvoie1 = "" : colRetour1 = ""
+    colEnvoie2 = "" : colRetour2 = ""
+    colAutresJ = ""
+
+    Dim fld As Object
+    For Each fld In rs.Fields
+        Dim fn As String
+        fn = LCase(fld.Name)
+        If colEnvoie1 = "" And InStr(fn, "envoie") > 0 And InStr(fn, "1") > 0 Then colEnvoie1 = fld.Name
+        If colRetour1 = "" And InStr(fn, "retour") > 0 And InStr(fn, "1") > 0 Then colRetour1 = fld.Name
+        If colEnvoie2 = "" And InStr(fn, "envoie") > 0 And InStr(fn, "2") > 0 Then colEnvoie2 = fld.Name
+        If colRetour2 = "" And InStr(fn, "retour") > 0 And InStr(fn, "2") > 0 Then colRetour2 = fld.Name
+        If colAutresJ = "" And InStr(fn, "autres") > 0 And InStr(fn, "marche") > 0 Then colAutresJ = fld.Name
+        If colAutresJ = "" And InStr(fn, "autres j marche") > 0 Then colAutresJ = fld.Name
+    Next fld
+
     Dim totalImport As Long
     totalImport = 0
     Dim curRow As Long
     curRow = 3
 
-    Dim fIDSG     As String
-    Dim fRCT      As String
-    Dim fClient   As String
-    Dim fEtat     As String
-    Dim fAnalyste As String
-    Dim fDemande  As String
-    Dim fDateRec  As Variant
-
     Do While Not rs.EOF
-        ' Lire chaque champ avec gestion d erreur individuelle
-        On Error Resume Next
-        fIDSG     = Trim(CStr(rs.Fields("IDSG").Value))
-        fRCT      = Trim(CStr(rs.Fields("RCT").Value))
-        fClient   = Trim(CStr(rs.Fields("CLIENT").Value))
-        fEtat     = Trim(CStr(rs.Fields("ETAT").Value))
-        fAnalyste = Trim(CStr(rs.Fields("ANALYSTE").Value))
-        fDemande  = Trim(CStr(rs.Fields("DEMANDE").Value))
-        fDateRec  = rs.Fields("DATE DE RECEPTION").Value
-        On Error GoTo ErrHandler
+        Dim fIDSG     As String
+        Dim fRCT      As String
+        Dim fClient   As String
+        Dim fEtat     As String
+        Dim fAnalyste As String
+        Dim fDemande  As String
+        Dim fDateRec  As Variant
+        Dim fEnvoie1  As Variant
+        Dim fRetour1  As Variant
+        Dim fEnvoie2  As Variant
+        Dim fRetour2  As Variant
+        Dim fAutresJ  As Variant
 
-        ' Ecrire dans Donnees Access
+        fIDSG     = Nz(LireChamp(rs, "IDSG"),     "")
+        fRCT      = Nz(LireChamp(rs, "RCT"),      "")
+        fClient   = Nz(LireChamp(rs, "CLIENT"),   "")
+        fEtat     = Nz(LireChamp(rs, "ETAT"),     "")
+        fAnalyste = Nz(LireChamp(rs, "ANALYSTE"), "")
+        fDemande  = Nz(LireChamp(rs, "DEMANDE"),  "")
+        fDateRec  = LireChamp(rs, "DATE DE RECEPTION")
+        fEnvoie1  = IIf(colEnvoie1 <> "", LireChamp(rs, colEnvoie1), Null)
+        fRetour1  = IIf(colRetour1 <> "", LireChamp(rs, colRetour1), Null)
+        fEnvoie2  = IIf(colEnvoie2 <> "", LireChamp(rs, colEnvoie2), Null)
+        fRetour2  = IIf(colRetour2 <> "", LireChamp(rs, colRetour2), Null)
+        fAutresJ  = IIf(colAutresJ <> "", LireChamp(rs, colAutresJ), Null)
+
         wsDat.Cells(curRow, 1).Value = fIDSG
         wsDat.Cells(curRow, 2).Value = fRCT
         wsDat.Cells(curRow, 3).Value = fClient
@@ -176,8 +286,24 @@ Sub ActualiserDepuisAccess()
             wsDat.Cells(curRow, 7).Value = CDate(fDateRec)
             wsDat.Cells(curRow, 7).NumberFormat = "DD/MM/YYYY"
         End If
+        If IsDate(fEnvoie1) Then
+            wsDat.Cells(curRow, 8).Value = CDate(fEnvoie1)
+            wsDat.Cells(curRow, 8).NumberFormat = "DD/MM/YYYY"
+        End If
+        If IsDate(fRetour1) Then
+            wsDat.Cells(curRow, 9).Value = CDate(fRetour1)
+            wsDat.Cells(curRow, 9).NumberFormat = "DD/MM/YYYY"
+        End If
+        If IsDate(fEnvoie2) Then
+            wsDat.Cells(curRow, 10).Value = CDate(fEnvoie2)
+            wsDat.Cells(curRow, 10).NumberFormat = "DD/MM/YYYY"
+        End If
+        If IsDate(fRetour2) Then
+            wsDat.Cells(curRow, 11).Value = CDate(fRetour2)
+            wsDat.Cells(curRow, 11).NumberFormat = "DD/MM/YYYY"
+        End If
+        If Not IsNull(fAutresJ) Then wsDat.Cells(curRow, 12).Value = fAutresJ
 
-        ' Zebra
         If curRow Mod 2 = 0 Then
             wsDat.Rows(curRow).Interior.Color = RGB(245, 247, 250)
         Else
@@ -218,7 +344,6 @@ Sub ActualiserDepuisAccess()
         End If
     Next r
 
-    ' Effacer cellule par cellule (evite erreur 1004 sur tableau structure)
     Dim clearTo As Long
     clearTo = Application.Max(susLastRow, totalImport + 2)
     For r = 3 To clearTo
@@ -229,10 +354,10 @@ Sub ActualiserDepuisAccess()
         wsSus.Cells(r, 6).Value  = ""
         wsSus.Cells(r, 7).Value  = ""
         wsSus.Cells(r, 8).Value  = ""
+        wsSus.Cells(r, 9).Value  = ""
         wsSus.Cells(r, 14).Value = ""
     Next r
 
-    ' Reecrire depuis wsDat
     For i = 1 To totalImport
         Dim rSus As Long
         rSus = i + 2
@@ -253,6 +378,27 @@ Sub ActualiserDepuisAccess()
             wsSus.Cells(rSus, 7).NumberFormat = "DD/MM/YYYY"
         End If
 
+        Dim sEtat As String
+        sEtat = LCase(Trim(CStr(wsDat.Cells(i + 2, 4).Value)))
+        Dim bEnCours As Boolean
+        bEnCours = (InStr(sEtat, "suspens") > 0)
+
+        ' Calcul duree depuis les dates recuperees
+        Dim duree As Long
+        duree = CalculerDureeSuspens( _
+            wsDat.Cells(i + 2, 8).Value, _
+            wsDat.Cells(i + 2, 9).Value, _
+            wsDat.Cells(i + 2, 10).Value, _
+            wsDat.Cells(i + 2, 11).Value, _
+            wsDat.Cells(i + 2, 12).Value, _
+            bEnCours)
+
+        If duree > 0 Then
+            wsSus.Cells(rSus, 9).Value = duree
+        Else
+            wsSus.Cells(rSus, 9).Value = ""
+        End If
+
         If dictStatut.Exists(sIDSG) Then
             wsSus.Cells(rSus, 8).Value  = dictStatut(sIDSG)
             wsSus.Cells(rSus, 10).Value = dictRaison1(sIDSG)
@@ -260,7 +406,7 @@ Sub ActualiserDepuisAccess()
             wsSus.Cells(rSus, 12).Value = dictRaison3(sIDSG)
             wsSus.Cells(rSus, 13).Value = dictComment(sIDSG)
         Else
-            wsSus.Cells(rSus, 8).Value = "En cours"
+            wsSus.Cells(rSus, 8).Value = IIf(bEnCours, "En cours", "Cloture")
         End If
     Next i
 
@@ -273,7 +419,12 @@ Sub ActualiserDepuisAccess()
 
     MsgBox "Actualisation terminee !" & vbCrLf & vbCrLf & _
            totalImport & " dossier(s) importes." & vbCrLf & _
-           nbAnalystes & " analyste(s) detectes.", _
+           nbAnalystes & " analyste(s) detectes." & vbCrLf & _
+           "Colonnes dates detectees :" & vbCrLf & _
+           "  Envoie 1 : " & IIf(colEnvoie1 = "", "non trouve", colEnvoie1) & vbCrLf & _
+           "  Retour 1 : " & IIf(colRetour1 = "", "non trouve", colRetour1) & vbCrLf & _
+           "  Envoie 2 : " & IIf(colEnvoie2 = "", "non trouve", colEnvoie2) & vbCrLf & _
+           "  Retour 2 : " & IIf(colRetour2 = "", "non trouve", colRetour2), _
            vbInformation, "Suivi Suspens SGCI"
     Exit Sub
 
@@ -281,8 +432,9 @@ ErrHandler:
     wsCfg.Range("B4").Value = "Erreur n" & Err.Number & " : " & Err.Description
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
-    MsgBox "Erreur n" & Err.Number & " :" & vbCrLf & vbCrLf & _
-           Err.Description, vbCritical, "Erreur VBA"
+    MsgBox "Erreur n" & Err.Number & " :" & vbCrLf & Err.Description & vbCrLf & vbCrLf & _
+           "Conseil : lancez d abord ListerColonnesAccess() pour voir les vrais noms de colonnes.", _
+           vbCritical, "Erreur VBA"
 
 Cleanup:
     On Error Resume Next
@@ -294,7 +446,6 @@ Cleanup:
     Application.ScreenUpdating = True
 End Sub
 
-' -- Diagnostic drivers OLEDB --
 Sub DiagnosticProviders()
     Dim msg As String
     msg = "Test drivers OLEDB :" & vbCrLf & vbCrLf
