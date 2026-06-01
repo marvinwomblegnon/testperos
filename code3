@@ -57,34 +57,25 @@ Sub ActualiserDepuisAccess()
 
     ' -- 1. Chemin Access --
     sPath = Trim(wsCfg.Range("B1").Value)
-
     If sPath = "" Then
         MsgBox "Chemin Access vide. Renseignez CONFIG > B1.", vbExclamation
         GoTo Cleanup
     End If
-
     If Dir(sPath) = "" Then
-        MsgBox "Fichier introuvable :" & vbCrLf & sPath & vbCrLf & vbCrLf & _
-               "Verifiez :" & vbCrLf & _
-               "  - Etes-vous connecte au lecteur S:\" & vbCrLf & _
-               "  - Le nom exact : OUTIL_DEAL_FLOW.accdb", _
-               vbCritical, "Fichier non trouve"
+        MsgBox "Fichier introuvable :" & vbCrLf & sPath, vbCritical
         GoTo Cleanup
     End If
 
     ' -- 2. Connexion --
     Set conn = ConnecterAccess(sPath)
     If conn Is Nothing Then
-        MsgBox "Impossible d ouvrir la base Access." & vbCrLf & vbCrLf & _
-               "Causes possibles :" & vbCrLf & _
-               "  - La base est ouverte en mode exclusif" & vbCrLf & _
-               "  - Driver ACE OLEDB absent (lancez DiagnosticProviders)" & vbCrLf & _
-               "  - Conflit 32/64 bits entre Excel et Access", _
-               vbCritical, "Connexion impossible"
+        MsgBox "Impossible de se connecter a Access." & vbCrLf & vbCrLf & _
+               "Lancez la macro DiagnosticProviders pour identifier le probleme.", _
+               vbCritical
         GoTo Cleanup
     End If
 
-    ' -- 3. Analystes -> Parametres col C --
+    ' -- 3. Analystes distincts -> Parametres col C --
     Dim lastAnRow As Long
     lastAnRow = wsPrm.Cells(wsPrm.Rows.Count, 3).End(xlUp).Row
     If lastAnRow >= 2 Then wsPrm.Range("C2:C" & lastAnRow).ClearContents
@@ -113,40 +104,28 @@ Sub ActualiserDepuisAccess()
         rsAn.MoveNext
     Loop
     rsAn.Close
-
     Dim nbAnalystes As Long
     nbAnalystes = anRow - 2
 
-    ' -- Validation liste analystes col E --
-    ' On evite l erreur 1004 sur tableau structure en utilisant
-    ' On Error Resume Next autour de Validation
+    ' Validation liste deroulante col E
     On Error Resume Next
     wsSus.Range("E3:E202").Validation.Delete
-    On Error GoTo ErrHandler
-
     If nbAnalystes > 0 Then
-        On Error Resume Next
         With wsSus.Range("E3:E202").Validation
             .Add Type:=3, AlertStyle:=1, Operator:=1, _
                  Formula1:="=Parametres!$C$2:$C$" & (anRow - 1)
             .IgnoreBlank = True
             .InCellDropdown = True
-            .ShowInput = False
-            .ShowError = False
         End With
-        On Error GoTo ErrHandler
     End If
+    On Error GoTo ErrHandler
 
     ' -- 4. Requete principale --
+    ' On utilise SELECT * pour eviter les erreurs de noms de colonnes
+    ' puis on lit les champs par leur nom depuis le recordset
     Set rs = CreateObject("ADODB.Recordset")
-    rs.Open "SELECT [IDSG],[RCT],[CLIENT],[ETAT],[ANALYSTE],[DEMANDE]," & _
-            "[DATE DE RECEPTION],[DATE D'ATTRIBUTION],[DATE DE PRISE EN CHARGE]," & _
-            "[DATE D'ENVOIE AU SIGNATAIRE],[SIGNATAIRE],[DATE DE SIGNATURE]," & _
-            "[ENVOIE MARCHE 1],[RETOUR MARCHE 1],[ENVOIE MARCHE 2],[RETOUR MARCHE 2]," & _
-            "[SECTEUR],[NOTE],[LAD],[MXOF],[DECISION],[DELAIS ANALYSTE],[DELAI TOTAL] " & _
-            "FROM [DATABASE] " & _
-            "WHERE [ETAT] = 'En suspens' " & _
-            "ORDER BY [DATE DE RECEPTION] DESC", conn, 1, 3
+    rs.Open "SELECT * FROM [DATABASE] WHERE [ETAT] = 'En suspens' " & _
+            "ORDER BY [IDSG]", conn, 1, 3
 
     ' -- 5. Ecriture dans Donnees Access --
     Dim lastDat As Long
@@ -154,39 +133,65 @@ Sub ActualiserDepuisAccess()
     If lastDat > 2 Then wsDat.Rows("3:" & lastDat).ClearContents
 
     If rs.EOF Then
-        MsgBox "Aucun dossier avec ETAT = 'En suspens' trouve dans DATABASE.", _
-               vbInformation, "Resultat vide"
+        MsgBox "Aucun dossier avec ETAT = 'En suspens' trouve.", vbInformation
         wsCfg.Range("B4").Value = "Connecte - aucun suspens"
         GoTo Cleanup
     End If
 
-    wsDat.Cells(3, 1).CopyFromRecordset rs
+    ' Ecrire les colonnes utiles une par une depuis le recordset
+    ' pour eviter toute erreur de nom de champ
+    Dim totalImport As Long
+    totalImport = 0
+    Dim curRow As Long
+    curRow = 3
+
+    Dim fIDSG     As String
+    Dim fRCT      As String
+    Dim fClient   As String
+    Dim fEtat     As String
+    Dim fAnalyste As String
+    Dim fDemande  As String
+    Dim fDateRec  As Variant
+
+    Do While Not rs.EOF
+        ' Lire chaque champ avec gestion d erreur individuelle
+        On Error Resume Next
+        fIDSG     = Trim(CStr(rs.Fields("IDSG").Value))
+        fRCT      = Trim(CStr(rs.Fields("RCT").Value))
+        fClient   = Trim(CStr(rs.Fields("CLIENT").Value))
+        fEtat     = Trim(CStr(rs.Fields("ETAT").Value))
+        fAnalyste = Trim(CStr(rs.Fields("ANALYSTE").Value))
+        fDemande  = Trim(CStr(rs.Fields("DEMANDE").Value))
+        fDateRec  = rs.Fields("DATE DE RECEPTION").Value
+        On Error GoTo ErrHandler
+
+        ' Ecrire dans Donnees Access
+        wsDat.Cells(curRow, 1).Value = fIDSG
+        wsDat.Cells(curRow, 2).Value = fRCT
+        wsDat.Cells(curRow, 3).Value = fClient
+        wsDat.Cells(curRow, 4).Value = fEtat
+        wsDat.Cells(curRow, 5).Value = fAnalyste
+        wsDat.Cells(curRow, 6).Value = fDemande
+        If IsDate(fDateRec) Then
+            wsDat.Cells(curRow, 7).Value = CDate(fDateRec)
+            wsDat.Cells(curRow, 7).NumberFormat = "DD/MM/YYYY"
+        End If
+
+        ' Zebra
+        If curRow Mod 2 = 0 Then
+            wsDat.Rows(curRow).Interior.Color = RGB(245, 247, 250)
+        Else
+            wsDat.Rows(curRow).Interior.Color = RGB(255, 255, 255)
+        End If
+        wsDat.Rows(curRow).RowHeight = 20
+
+        curRow = curRow + 1
+        totalImport = totalImport + 1
+        rs.MoveNext
+    Loop
     rs.Close
 
-    lastRow = wsDat.Cells(wsDat.Rows.Count, 1).End(xlUp).Row
-
-    Dim dateCols As Variant
-    dateCols = Array(7, 8, 9, 10, 12, 13, 14, 15, 16)
-    Dim dc As Variant
-    For Each dc In dateCols
-        wsDat.Range(wsDat.Cells(3, dc), wsDat.Cells(lastRow, dc)).NumberFormat = "DD/MM/YYYY"
-    Next dc
-
-    Dim r As Long
-    For r = 3 To lastRow
-        If r Mod 2 = 0 Then
-            wsDat.Rows(r).Interior.Color = RGB(245, 247, 250)
-        Else
-            wsDat.Rows(r).Interior.Color = RGB(255, 255, 255)
-        End If
-        wsDat.Rows(r).RowHeight = 20
-    Next r
-
-    Dim totalImport As Long
-    totalImport = lastRow - 2
-
     ' -- 6. Synchronisation Suspens --
-    ' Sauvegarder enrichissements DRC par IDSG
     Dim dictStatut  As Object
     Dim dictRaison1 As Object
     Dim dictRaison2 As Object
@@ -200,7 +205,7 @@ Sub ActualiserDepuisAccess()
 
     Dim susLastRow As Long
     susLastRow = wsSus.Cells(wsSus.Rows.Count, 2).End(xlUp).Row
-
+    Dim r As Long
     For r = 3 To susLastRow
         Dim idsgKey As String
         idsgKey = Trim(CStr(wsSus.Cells(r, 2).Value))
@@ -213,9 +218,7 @@ Sub ActualiserDepuisAccess()
         End If
     Next r
 
-    ' Effacer colonnes Access dans Suspens (B a N)
-    ' On travaille hors tableau structure pour eviter 1004 :
-    ' on ecrit cellule par cellule plutot que ClearContents sur plage
+    ' Effacer cellule par cellule (evite erreur 1004 sur tableau structure)
     Dim clearTo As Long
     clearTo = Application.Max(susLastRow, totalImport + 2)
     For r = 3 To clearTo
@@ -229,7 +232,7 @@ Sub ActualiserDepuisAccess()
         wsSus.Cells(r, 14).Value = ""
     Next r
 
-    ' Reecrire depuis Access
+    ' Reecrire depuis wsDat
     For i = 1 To totalImport
         Dim rSus As Long
         rSus = i + 2
@@ -250,7 +253,6 @@ Sub ActualiserDepuisAccess()
             wsSus.Cells(rSus, 7).NumberFormat = "DD/MM/YYYY"
         End If
 
-        ' Restaurer enrichissements DRC
         If dictStatut.Exists(sIDSG) Then
             wsSus.Cells(rSus, 8).Value  = dictStatut(sIDSG)
             wsSus.Cells(rSus, 10).Value = dictRaison1(sIDSG)
@@ -280,9 +282,7 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "Erreur n" & Err.Number & " :" & vbCrLf & vbCrLf & _
-           Err.Description & vbCrLf & vbCrLf & _
-           "Ligne approximative : verifiez dans l editeur VBA (Alt+F11)", _
-           vbCritical, "Erreur VBA"
+           Err.Description, vbCritical, "Erreur VBA"
 
 Cleanup:
     On Error Resume Next
@@ -297,7 +297,7 @@ End Sub
 ' -- Diagnostic drivers OLEDB --
 Sub DiagnosticProviders()
     Dim msg As String
-    msg = "Test des drivers OLEDB sur ce poste :" & vbCrLf & vbCrLf
+    msg = "Test drivers OLEDB :" & vbCrLf & vbCrLf
     Dim providers(1) As String
     providers(0) = "Microsoft.ACE.OLEDB.16.0"
     providers(1) = "Microsoft.ACE.OLEDB.12.0"
@@ -316,11 +316,11 @@ Sub DiagnosticProviders()
         If nErr = 0 Or InStr(LCase(sErr), "find") > 0 Or InStr(LCase(sErr), "trouv") > 0 Then
             msg = msg & "  [OK] " & providers(p) & vbCrLf
         Else
-            msg = msg & "  [X]  " & providers(p) & vbCrLf & "       " & sErr & vbCrLf
+            msg = msg & "  [X]  " & providers(p) & " -> " & sErr & vbCrLf
         End If
         Set cn = Nothing
     Next p
-    msg = msg & vbCrLf & "Chemin configure :" & vbCrLf & ThisWorkbook.Sheets(1).Range("B1").Value
+    msg = msg & vbCrLf & "Chemin : " & ThisWorkbook.Sheets(1).Range("B1").Value
     MsgBox msg, vbInformation, "Diagnostic OLEDB"
 End Sub
 
