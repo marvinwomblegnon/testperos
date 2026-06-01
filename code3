@@ -7,6 +7,15 @@ Option Explicit
 '                      7=Mensuel 8=Parametres 9=VBASetup
 ' ================================================================
 
+' Remplace Nz() qui n existe que dans Access VBA
+Function NzStr(val As Variant, defaut As String) As String
+    If IsNull(val) Or IsEmpty(val) Then
+        NzStr = defaut
+    Else
+        NzStr = Trim(CStr(val))
+    End If
+End Function
+
 Function ConnecterAccess(sPath As String) As Object
     Dim cn As Object
     Dim providers(1) As String
@@ -32,56 +41,6 @@ Function ConnecterAccess(sPath As String) As Object
     Set ConnecterAccess = Nothing
 End Function
 
-' ================================================================
-' DIAGNOSTIC : liste toutes les colonnes de la table DATABASE
-' A lancer UNE FOIS pour connaitre les vrais noms de colonnes
-' ================================================================
-Sub ListerColonnesAccess()
-    Dim sPath As String
-    Dim conn  As Object
-    Dim rs    As Object
-
-    sPath = Trim(ThisWorkbook.Sheets(1).Range("B1").Value)
-    If sPath = "" Or Dir(sPath) = "" Then
-        MsgBox "Fichier Access introuvable. Verifiez CONFIG > B1.", vbCritical
-        Exit Sub
-    End If
-
-    Set conn = ConnecterAccess(sPath)
-    If conn Is Nothing Then
-        MsgBox "Connexion impossible.", vbCritical
-        Exit Sub
-    End If
-
-    Set rs = CreateObject("ADODB.Recordset")
-    rs.Open "SELECT TOP 1 * FROM [DATABASE]", conn, 1, 3
-
-    Dim msg As String
-    msg = "Colonnes de la table DATABASE (" & rs.Fields.Count & " colonnes) :" & vbCrLf & vbCrLf
-    Dim f As Object
-    Dim i As Integer
-    i = 1
-    For Each f In rs.Fields
-        msg = msg & i & ". [" & f.Name & "]" & vbCrLf
-        i = i + 1
-        ' Limiter l affichage a 40 colonnes par boite
-        If i Mod 40 = 0 Then
-            MsgBox msg, vbInformation, "Colonnes ACCESS (suite)"
-            msg = ""
-        End If
-    Next f
-
-    rs.Close
-    conn.Close
-
-    If Len(msg) > 0 Then
-        MsgBox msg, vbInformation, "Colonnes de la table DATABASE"
-    End If
-End Sub
-
-' ================================================================
-' UTILITAIRE : lire le champ par nom avec fallback silencieux
-' ================================================================
 Function LireChamp(rs As Object, nomChamp As String) As Variant
     On Error Resume Next
     LireChamp = rs.Fields(nomChamp).Value
@@ -94,8 +53,8 @@ End Function
 
 Function CalculerDureeSuspens(dEnvoie1 As Variant, dRetour1 As Variant, _
                                dEnvoie2 As Variant, dRetour2 As Variant, _
-                               autresJ   As Variant, _
-                               bEnCours  As Boolean) As Long
+                               autresJ  As Variant, _
+                               bEnCours As Boolean) As Long
     Dim duree As Long
     duree = 0
     If IsDate(dEnvoie1) Then
@@ -119,6 +78,40 @@ Function CalculerDureeSuspens(dEnvoie1 As Variant, dRetour1 As Variant, _
     CalculerDureeSuspens = duree
 End Function
 
+Sub ListerColonnesAccess()
+    Dim sPath As String
+    Dim conn  As Object
+    Dim rs    As Object
+    sPath = Trim(ThisWorkbook.Sheets(1).Range("B1").Value)
+    If sPath = "" Or Dir(sPath) = "" Then
+        MsgBox "Fichier Access introuvable.", vbCritical
+        Exit Sub
+    End If
+    Set conn = ConnecterAccess(sPath)
+    If conn Is Nothing Then
+        MsgBox "Connexion impossible.", vbCritical
+        Exit Sub
+    End If
+    Set rs = CreateObject("ADODB.Recordset")
+    rs.Open "SELECT TOP 1 * FROM [DATABASE]", conn, 1, 3
+    Dim msg As String
+    msg = "Colonnes (" & rs.Fields.Count & ") :" & vbCrLf & vbCrLf
+    Dim f As Object
+    Dim i As Integer
+    i = 1
+    For Each f In rs.Fields
+        msg = msg & i & ". [" & f.Name & "]" & vbCrLf
+        i = i + 1
+        If i Mod 35 = 0 Then
+            MsgBox msg, vbInformation, "Colonnes (suite)"
+            msg = ""
+        End If
+    Next f
+    rs.Close
+    conn.Close
+    If Len(msg) > 0 Then MsgBox msg, vbInformation, "Colonnes DATABASE"
+End Sub
+
 Sub ActualiserDepuisAccess()
 
     Dim sPath    As String
@@ -141,7 +134,6 @@ Sub ActualiserDepuisAccess()
     Set wsSus = ThisWorkbook.Sheets(4)
     Set wsPrm = ThisWorkbook.Sheets(8)
 
-    ' -- 1. Chemin Access --
     sPath = Trim(wsCfg.Range("B1").Value)
     If sPath = "" Then
         MsgBox "Chemin Access vide. Renseignez CONFIG > B1.", vbExclamation
@@ -152,15 +144,13 @@ Sub ActualiserDepuisAccess()
         GoTo Cleanup
     End If
 
-    ' -- 2. Connexion --
     Set conn = ConnecterAccess(sPath)
     If conn Is Nothing Then
-        MsgBox "Impossible de se connecter a Access." & vbCrLf & _
-               "Lancez DiagnosticProviders.", vbCritical
+        MsgBox "Impossible de se connecter a Access.", vbCritical
         GoTo Cleanup
     End If
 
-    ' -- 3. Analystes --
+    ' -- Analystes --
     Dim lastAnRow As Long
     lastAnRow = wsPrm.Cells(wsPrm.Rows.Count, 3).End(xlUp).Row
     If lastAnRow >= 2 Then wsPrm.Range("C2:C" & lastAnRow).ClearContents
@@ -174,7 +164,7 @@ Sub ActualiserDepuisAccess()
     anRow = 2
     Do While Not rsAn.EOF
         Dim anName As String
-        anName = Trim(CStr(rsAn.Fields(0).Value))
+        anName = NzStr(rsAn.Fields(0).Value, "")
         If anName <> "" Then
             wsPrm.Cells(anRow, 3).Value = anName
             wsPrm.Cells(anRow, 3).Font.Name = "Arial"
@@ -204,7 +194,7 @@ Sub ActualiserDepuisAccess()
     End If
     On Error GoTo ErrHandler
 
-    ' -- 4. Requete : SELECT * pour eviter erreurs de noms --
+    ' -- Requete principale --
     Set rs = CreateObject("ADODB.Recordset")
     rs.Open "SELECT * FROM [DATABASE] " & _
             "WHERE [ETAT] LIKE '*suspens*' " & _
@@ -212,7 +202,6 @@ Sub ActualiserDepuisAccess()
             "OR [ENVOIE MARCHE 2] IS NOT NULL " & _
             "ORDER BY [IDSG]", conn, 1, 3
 
-    ' -- 5. Ecriture dans Donnees Access --
     Dim lastDat As Long
     lastDat = wsDat.Cells(wsDat.Rows.Count, 1).End(xlUp).Row
     If lastDat > 2 Then wsDat.Rows("3:" & lastDat).ClearContents
@@ -223,8 +212,7 @@ Sub ActualiserDepuisAccess()
         GoTo Cleanup
     End If
 
-    ' Detecter les vrais noms de colonnes dates dans le recordset
-    ' en cherchant par mots-cles (insensible a la casse)
+    ' Detection automatique des colonnes dates par mots-cles
     Dim colEnvoie1 As String, colRetour1 As String
     Dim colEnvoie2 As String, colRetour2 As String
     Dim colAutresJ As String
@@ -240,8 +228,8 @@ Sub ActualiserDepuisAccess()
         If colRetour1 = "" And InStr(fn, "retour") > 0 And InStr(fn, "1") > 0 Then colRetour1 = fld.Name
         If colEnvoie2 = "" And InStr(fn, "envoie") > 0 And InStr(fn, "2") > 0 Then colEnvoie2 = fld.Name
         If colRetour2 = "" And InStr(fn, "retour") > 0 And InStr(fn, "2") > 0 Then colRetour2 = fld.Name
-        If colAutresJ = "" And InStr(fn, "autres") > 0 And InStr(fn, "marche") > 0 Then colAutresJ = fld.Name
-        If colAutresJ = "" And InStr(fn, "autres j marche") > 0 Then colAutresJ = fld.Name
+        If colAutresJ = "" And InStr(fn, "autres") > 0 And _
+           (InStr(fn, "marche") > 0 Or InStr(fn, "j marche") > 0) Then colAutresJ = fld.Name
     Next fld
 
     Dim totalImport As Long
@@ -263,12 +251,13 @@ Sub ActualiserDepuisAccess()
         Dim fRetour2  As Variant
         Dim fAutresJ  As Variant
 
-        fIDSG     = Nz(LireChamp(rs, "IDSG"),     "")
-        fRCT      = Nz(LireChamp(rs, "RCT"),      "")
-        fClient   = Nz(LireChamp(rs, "CLIENT"),   "")
-        fEtat     = Nz(LireChamp(rs, "ETAT"),     "")
-        fAnalyste = Nz(LireChamp(rs, "ANALYSTE"), "")
-        fDemande  = Nz(LireChamp(rs, "DEMANDE"),  "")
+        ' NzStr remplace Nz() qui n existe pas dans Excel VBA
+        fIDSG     = NzStr(LireChamp(rs, "IDSG"),     "")
+        fRCT      = NzStr(LireChamp(rs, "RCT"),      "")
+        fClient   = NzStr(LireChamp(rs, "CLIENT"),   "")
+        fEtat     = NzStr(LireChamp(rs, "ETAT"),     "")
+        fAnalyste = NzStr(LireChamp(rs, "ANALYSTE"), "")
+        fDemande  = NzStr(LireChamp(rs, "DEMANDE"),  "")
         fDateRec  = LireChamp(rs, "DATE DE RECEPTION")
         fEnvoie1  = IIf(colEnvoie1 <> "", LireChamp(rs, colEnvoie1), Null)
         fRetour1  = IIf(colRetour1 <> "", LireChamp(rs, colRetour1), Null)
@@ -310,14 +299,13 @@ Sub ActualiserDepuisAccess()
             wsDat.Rows(curRow).Interior.Color = RGB(255, 255, 255)
         End If
         wsDat.Rows(curRow).RowHeight = 20
-
         curRow = curRow + 1
         totalImport = totalImport + 1
         rs.MoveNext
     Loop
     rs.Close
 
-    ' -- 6. Synchronisation Suspens --
+    ' -- Synchronisation Suspens --
     Dim dictStatut  As Object
     Dim dictRaison1 As Object
     Dim dictRaison2 As Object
@@ -383,7 +371,6 @@ Sub ActualiserDepuisAccess()
         Dim bEnCours As Boolean
         bEnCours = (InStr(sEtat, "suspens") > 0)
 
-        ' Calcul duree depuis les dates recuperees
         Dim duree As Long
         duree = CalculerDureeSuspens( _
             wsDat.Cells(i + 2, 8).Value, _
@@ -392,7 +379,6 @@ Sub ActualiserDepuisAccess()
             wsDat.Cells(i + 2, 11).Value, _
             wsDat.Cells(i + 2, 12).Value, _
             bEnCours)
-
         If duree > 0 Then
             wsSus.Cells(rSus, 9).Value = duree
         Else
@@ -406,11 +392,14 @@ Sub ActualiserDepuisAccess()
             wsSus.Cells(rSus, 12).Value = dictRaison3(sIDSG)
             wsSus.Cells(rSus, 13).Value = dictComment(sIDSG)
         Else
-            wsSus.Cells(rSus, 8).Value = IIf(bEnCours, "En cours", "Cloture")
+            If bEnCours Then
+                wsSus.Cells(rSus, 8).Value = "En cours"
+            Else
+                wsSus.Cells(rSus, 8).Value = "Cloture"
+            End If
         End If
     Next i
 
-    ' -- 7. MAJ CONFIG --
     wsCfg.Range("B3").Value = Now()
     wsCfg.Range("B4").Value = "Connecte - " & totalImport & " dossier(s) | " & nbAnalystes & " analyste(s)"
 
@@ -419,12 +408,12 @@ Sub ActualiserDepuisAccess()
 
     MsgBox "Actualisation terminee !" & vbCrLf & vbCrLf & _
            totalImport & " dossier(s) importes." & vbCrLf & _
-           nbAnalystes & " analyste(s) detectes." & vbCrLf & _
+           nbAnalystes & " analyste(s) detectes." & vbCrLf & vbCrLf & _
            "Colonnes dates detectees :" & vbCrLf & _
-           "  Envoie 1 : " & IIf(colEnvoie1 = "", "non trouve", colEnvoie1) & vbCrLf & _
-           "  Retour 1 : " & IIf(colRetour1 = "", "non trouve", colRetour1) & vbCrLf & _
-           "  Envoie 2 : " & IIf(colEnvoie2 = "", "non trouve", colEnvoie2) & vbCrLf & _
-           "  Retour 2 : " & IIf(colRetour2 = "", "non trouve", colRetour2), _
+           "  Envoie M1 : " & IIf(colEnvoie1 = "", "NON TROUVE", colEnvoie1) & vbCrLf & _
+           "  Retour M1 : " & IIf(colRetour1 = "", "NON TROUVE", colRetour1) & vbCrLf & _
+           "  Envoie M2 : " & IIf(colEnvoie2 = "", "NON TROUVE", colEnvoie2) & vbCrLf & _
+           "  Retour M2 : " & IIf(colRetour2 = "", "NON TROUVE", colRetour2), _
            vbInformation, "Suivi Suspens SGCI"
     Exit Sub
 
@@ -433,7 +422,7 @@ ErrHandler:
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     MsgBox "Erreur n" & Err.Number & " :" & vbCrLf & Err.Description & vbCrLf & vbCrLf & _
-           "Conseil : lancez d abord ListerColonnesAccess() pour voir les vrais noms de colonnes.", _
+           "Conseil : lancez ListerColonnesAccess() pour voir les vrais noms.", _
            vbCritical, "Erreur VBA"
 
 Cleanup:
