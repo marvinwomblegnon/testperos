@@ -11,3 +11,13 @@ End Sub
 Private Sub Option373_AfterUpdate()
     Call UpdateDatabaseField("FAST", Me.Option373)
 End Sub
+
+
+Public Sub Update_FAST()
+    Dim IDValue As String
+    IDValue = Nz(Me.Texte162.Value, "")
+    Me.Option373 = Nz(DLookup("[FAST]", "DATABASE", "[IDSG]='" & Replace(IDValue, "'", "''") & "'"), False)
+End Sub
+
+
+Forms("5_MODIFICATIONS").Update_FAST
