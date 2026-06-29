@@ -1,0 +1,13 @@
+Public Sub UpdateDatabaseField(fieldName As String, fieldValue As Variant)
+    Dim IDValue As String
+    IDValue = Nz(Forms!Form_5_MODIFICATIONS!Texte162.Value, "")
+    
+    If Len(IDValue) > 0 Then
+        CurrentDb.Execute "UPDATE DATABASE SET [" & fieldName & "] = " & fieldValue & " WHERE [IDSG] = '" & Replace(IDValue, "'", "''") & "'"
+    End If
+End Sub
+
+
+Private Sub Option373_AfterUpdate()
+    Call UpdateDatabaseField("FAST", Me.Option373)
+End Sub
