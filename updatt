@@ -29,3 +29,19 @@ If Len(IDValue) > 0 Then
         CurrentDb.Execute "UPDATE DATABASE SET [" & fieldName & "] = '" & fieldValue & "' WHERE [IDSG] = '" & Replace(IDValue, "'", "''") & "'"
     End If
 End If
+
+
+Public Sub UpdateDatabaseField(fieldName As String, fieldValue As Variant)
+    Dim IDValue As String
+    Dim valeur As String
+    IDValue = Nz(Me.Texte162.Value, "")
+    
+    If Len(IDValue) > 0 Then
+        If fieldValue = True Then
+            valeur = "Oui"
+        Else
+            valeur = ""
+        End If
+        CurrentDb.Execute "UPDATE DATABASE SET [" & fieldName & "] = '" & valeur & "' WHERE [IDSG] = '" & Replace(IDValue, "'", "''") & "'"
+    End If
+End Sub
