@@ -100,3 +100,58 @@ Public Sub Update_TypeLigne()
 End Sub
 
 Forms("5_MODIFICATIONS").Update_TypeLigne
+
+
+mise 2
+
+
+Private Sub SaveTypeGarantie()
+    Dim valeur As String
+    Dim sql As String
+    Dim IDValue As String
+    IDValue = Nz(Me.Texte162.Value, "")
+    
+    valeur = ""
+    If Me.ChkARIZ = True Then valeur = valeur & "ARIZ, "
+    If Me.ChkAFG = True Then valeur = valeur & "AFG, "
+    If Me.ChkIFC = True Then valeur = valeur & "IFC, "
+    
+    If Len(valeur) > 0 Then valeur = Left(valeur, Len(valeur) - 2)
+    
+    If Len(IDValue) > 0 Then
+        sql = "UPDATE [DATABASE] SET [TYPE_GARANTIE] = '" & valeur & "'"
+        sql = sql & " WHERE [IDSG] = '" & IDValue & "'"
+        CurrentDb.Execute sql
+    End If
+End Sub
+
+Private Sub ChkARIZ_AfterUpdate()
+    Call SaveTypeGarantie()
+End Sub
+
+Private Sub ChkAFG_AfterUpdate()
+    Call SaveTypeGarantie()
+End Sub
+
+Private Sub ChkIFC_AfterUpdate()
+    Call SaveTypeGarantie()
+End Sub
+
+
+
+Public Sub Update_TypeGarantie()
+    Dim IDValue As String
+    Dim valeur As String
+    IDValue = Nz(Me.Texte162.Value, "")
+    
+    valeur = Nz(DLookup("[TYPE_GARANTIE]", "[DATABASE]", "[IDSG]='" & IDValue & "'"), "")
+    
+    Me.ChkARIZ = (InStr(valeur, "ARIZ") > 0)
+    Me.ChkAFG = (InStr(valeur, "AFG") > 0)
+    Me.ChkIFC = (InStr(valeur, "IFC") > 0)
+End Sub
+
+
+
+
+Forms("5_MODIFICATIONS").Update_TypeGarantie
