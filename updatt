@@ -45,3 +45,58 @@ Public Sub UpdateDatabaseField(fieldName As String, fieldValue As Variant)
         CurrentDb.Execute "UPDATE DATABASE SET [" & fieldName & "] = '" & valeur & "' WHERE [IDSG] = '" & Replace(IDValue, "'", "''") & "'"
     End If
 End Sub
+
+mise a jour 
+
+
+
+Private Sub SaveTypeLigne()
+    Dim valeur As String
+    Dim sql As String
+    Dim IDValue As String
+    IDValue = Nz(Me.Texte162.Value, "")
+    
+    valeur = ""
+    If Me.ChkCaisse = True Then valeur = valeur & "Caisse, "
+    If Me.ChkSignature = True Then valeur = valeur & "Signature, "
+    If Me.ChkMLT = True Then valeur = valeur & "Moyen/Long terme, "
+    
+    ' Supprimer la dernière virgule
+    If Len(valeur) > 0 Then valeur = Left(valeur, Len(valeur) - 2)
+    
+    If Len(IDValue) > 0 Then
+        sql = "UPDATE [DATABASE] SET [TYPE_LIGNE] = '" & valeur & "'"
+        sql = sql & " WHERE [IDSG] = '" & IDValue & "'"
+        CurrentDb.Execute sql
+    End If
+End Sub
+
+
+
+
+Private Sub ChkCaisse_AfterUpdate()
+    Call SaveTypeLigne()
+End Sub
+
+Private Sub ChkSignature_AfterUpdate()
+    Call SaveTypeLigne()
+End Sub
+
+Private Sub ChkMLT_AfterUpdate()
+    Call SaveTypeLigne()
+End Sub
+
+
+Public Sub Update_TypeLigne()
+    Dim IDValue As String
+    Dim valeur As String
+    IDValue = Nz(Me.Texte162.Value, "")
+    
+    valeur = Nz(DLookup("[TYPE_LIGNE]", "[DATABASE]", "[IDSG]='" & IDValue & "'"), "")
+    
+    Me.ChkCaisse = (InStr(valeur, "Caisse") > 0)
+    Me.ChkSignature = (InStr(valeur, "Signature") > 0)
+    Me.ChkMLT = (InStr(valeur, "Moyen/Long terme") > 0)
+End Sub
+
+Forms("5_MODIFICATIONS").Update_TypeLigne
