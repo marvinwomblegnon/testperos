@@ -21,3 +21,11 @@ End Sub
 
 
 Forms("5_MODIFICATIONS").Update_FAST
+
+If Len(IDValue) > 0 Then
+    If IsNumeric(fieldValue) Or VarType(fieldValue) = vbBoolean Then
+        CurrentDb.Execute "UPDATE DATABASE SET [" & fieldName & "] = " & IIf(fieldValue, -1, 0) & " WHERE [IDSG] = '" & Replace(IDValue, "'", "''") & "'"
+    Else
+        CurrentDb.Execute "UPDATE DATABASE SET [" & fieldName & "] = '" & fieldValue & "' WHERE [IDSG] = '" & Replace(IDValue, "'", "''") & "'"
+    End If
+End If
